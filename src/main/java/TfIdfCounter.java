@@ -1,6 +1,7 @@
 import com.google.gson.Gson;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
+import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.DoubleWritable;
@@ -11,7 +12,9 @@ import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
+import java.io.FileWriter;
 import java.io.IOException;
+import java.io.Writer;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Scanner;
@@ -30,15 +33,23 @@ public class TfIdfCounter {
             Configuration configuration = new Configuration();
             configuration.addResource(new Path("/hadoop/etc/hadoop/core-site.xml"));
             configuration.addResource(new Path("/hadoop/etc/hadoop/hdfs-site.xml"));
+            Path path =new Path("/output/output.txt");
+            FileSystem fs =path.getFileSystem(configuration);
+            FSDataOutputStream stream=fs.append(path);
+            stream.writeChars("www");
 
             FileSystem fileSystem = FileSystem.get(configuration);
-            FSDataInputStream stream = fileSystem.open(new Path("output_idf"));
-            Scanner scanner = new Scanner(stream);
+            //FSDataInputStream stream = fileSystem.open(new Path("/output"));
+
+            Writer writer =new FileWriter("output/output.txt");
+            writer.append("File");
+            writer.close();
+            /*Scanner scanner = new Scanner(stream);
             while (scanner.hasNextLine()) {
                 String inputLine = scanner.nextLine();
                 String[] input = inputLine.split("[ \t]+");
                 wordsIdf.put(input[0], Integer.parseInt(input[1]));
-            }
+            }*/
         }
 
         public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
