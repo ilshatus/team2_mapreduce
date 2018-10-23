@@ -74,7 +74,7 @@ public class IdfCounter {
         job.setOutputValueClass(IntWritable.class);
 
         FileInputFormat.addInputPath(job, new Path("input"));
-        FileOutputFormat.setOutputPath(job, new Path("output"));
+        FileOutputFormat.setOutputPath(job, new Path("output_idf"));
 
         System.exit(job.waitForCompletion(true) ? 0 : 1);
     }
