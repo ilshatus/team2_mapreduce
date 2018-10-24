@@ -12,6 +12,7 @@ import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 import java.io.IOException;
+import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Scanner;
@@ -28,11 +29,8 @@ public class TfIdfCounter {
             wordsIdf = new HashMap<String, Integer>();
 
             Configuration configuration = new Configuration();
-            configuration.addResource(new Path("/hadoop/etc/hadoop/core-site.xml"));
-            configuration.addResource(new Path("/hadoop/etc/hadoop/hdfs-site.xml"));
-
-            FileSystem fileSystem = FileSystem.get(configuration);
-            FSDataInputStream stream = fileSystem.open(new Path("output_idf"));
+            FileSystem fileSystem = FileSystem.get(URI.create("hdfs://10.90.138.32:9000/user/team2"), configuration);
+            FSDataInputStream stream = fileSystem.open(new Path("output_idf/part-r-00000"));
             Scanner scanner = new Scanner(stream);
             while (scanner.hasNextLine()) {
                 String inputLine = scanner.nextLine();
@@ -67,7 +65,7 @@ public class TfIdfCounter {
                 for (String word : wordsCount.keySet()) {
                     Integer tf = wordsCount.get(word);
                     Integer idf = wordsIdf.get(word);
-                    tfIdf.put(new Text(word), new DoubleWritable(tf / idf));
+                    tfIdf.put(new Text(word), new DoubleWritable(1D * tf / idf));
                 }
                 context.write(new Text(document.getId()), tfIdf);
                 wordsCount.clear();
