@@ -49,6 +49,7 @@ public class TfIdfCounter {
                     wordsIdf.put(input[0], Integer.parseInt(input[1]));
                 }
             }
+            fileSystem.close();
         }
 
         public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
@@ -93,6 +94,8 @@ public class TfIdfCounter {
             }
         }
     }
+
+
 
     public static void main(String[] args) throws Exception {
         Configuration conf = new Configuration();
