@@ -1,5 +1,5 @@
 public class Document {
-
+//supporting class for parsing json
     private String id;
 
     private String url;

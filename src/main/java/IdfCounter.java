@@ -19,17 +19,24 @@ public class IdfCounter {
 
     public static class IdfMapper
             extends Mapper<Object, Text, Text, IntWritable> {
+        //Google json parse
         private Gson g = new Gson();
 
         public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+            //new document start from new line
             StringTokenizer documents = new StringTokenizer(value.toString(), "\n");
+            //Map will contain existent of word
             Map<String, Boolean> wordExists = new HashMap<String, Boolean>();
             while (documents.hasMoreTokens()) {
+                //parse json
                 Document document = g.fromJson(documents.nextToken(), Document.class);
+                //split to words
                 String[] words = document.getText().toLowerCase()
                         .split("([ \n\t\r'\"!@#$%^&*()_\\-+={}\\[\\]|<>;:,.\\/`~]|\\n)+");
+                //for each word
                 for (String word : words) {
                     boolean bad = false;
+                    //check if word consist of letters
                     for (Character ch : word.toCharArray()) {
                         if (!(ch >= 'a' && ch <= 'z')) {
                             bad = true;
@@ -37,11 +44,13 @@ public class IdfCounter {
                         }
                     }
                     if (bad) continue;
+                    //if word does not exist add to hash map
                     if (!wordExists.containsKey(word)) {
                         wordExists.put(word, true);
                         context.write(new Text(word), new IntWritable(1));
                     }
                 }
+                //clear hash map for new document
                 wordExists.clear();
             }
         }
@@ -52,10 +61,16 @@ public class IdfCounter {
             extends Reducer<Text, IntWritable, Text, IntWritable> {
         public void reduce(Text key, Iterable<IntWritable> values,
                            Context context) throws IOException, InterruptedException {
+
             Integer sum = 0;
+
+            //Since mapper returns only one if it occurs in document
+            //We can sum up to knw in how much document word occurs
             for (IntWritable val : values) {
+
                 sum += val.get();
             }
+
             context.write(key, new IntWritable(sum));
         }
     }
