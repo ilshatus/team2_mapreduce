@@ -1,5 +1,3 @@
-import com.google.gson.Gson;
-import javafx.beans.binding.ObjectExpression;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.*;
 import org.apache.hadoop.io.*;
@@ -8,12 +6,9 @@ import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
-import org.apache.hadoop.util.Progressable;
 
-import java.awt.image.RescaleOp;
 import java.io.*;
 import java.net.URI;
-import java.sql.SQLOutput;
 import java.util.*;
 
 public class Query {
@@ -22,27 +17,26 @@ public class Query {
 
     private final static String topPath = "hdfs://10.90.138.32:9000/user/team2/top";
 
+    private static String tf_idf = "tf_idf";
+    private static String temp_idf = "temp_idf_output";
+    private static String result_folder = "result";
+
     public static class QueryMapper
-            extends Mapper<Text, MapWritable, IntWritable, Text> {
-        private Gson g = new Gson();
-
-        //This hash map will contain Idfs of documents
-        private HashMap<String, Integer> wordsIdf;
-
+            extends Mapper<Object, Text, IntWritable, Text> {
+        private HashMap<String, Integer> wordsIdf; // idfs of documents
         private HashMap<String, Double> queryTfIdf; // idf for words from query
 
         //Default constructor
         public QueryMapper() throws IOException {
             //Initialise HashMap
             wordsIdf = new HashMap<String, Integer>();
-
             //new configuration
             Configuration configuration = new Configuration();
             //Open file system
             FileSystem fileSystem = FileSystem.get(URI.create(file_system_path), configuration);
             //iterator for files
             RemoteIterator<LocatedFileStatus> fileStatusListIterator = fileSystem.listFiles(
-                    new Path("output_idf/"), true);
+                    new Path(temp_idf), true);
             //for all files in folder
             while (fileStatusListIterator.hasNext()) {
                 //open stream for file
@@ -56,46 +50,140 @@ public class Query {
                 }
             }
 
-
+            queryTfIdf = new HashMap<String, Double>();
             Path hdfsPath = new Path(tfPath);
-            StringBuilder fileContent = new StringBuilder("");
             try {
                 BufferedReader bfr = new BufferedReader(new InputStreamReader(fileSystem.open(hdfsPath)));
                 String str;
                 while ((str = bfr.readLine()) != null) {
                     String input[] = str.split(" ");
-                    System.out.println("read from map " + str);
-
                     if (wordsIdf.containsKey(input[0])) {
                         queryTfIdf.put(input[0], 1D * Integer.parseInt(input[1]) / wordsIdf.get(input[0]));
                     }
-
                 }
             } catch (IOException ex) {
-                System.out.println("----------Could not read from HDFS---------\n");
+                System.out.println("QueryMapper - could not read from HDFS\n");
             }
 
             fileSystem.close();
         }
 
-        public void map(Text key, MapWritable value, Context context) throws IOException, InterruptedException {
+        public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+            String str = value.toString();
+            int doc_id = Integer.parseInt(str.substring(0, str.indexOf('{')).trim());
+            String content = str.substring(str.indexOf('{') + 1, str.length() - 1);
             double res = 0.0;
-
-
             for (Map.Entry<String, Double> entry : queryTfIdf.entrySet()) {
-                Text word = new Text(entry.getKey());
-                if (value.containsKey(word)) {
-                    Double val = ((DoubleWritable) value.get(word)).get();
+                String word = new Text(entry.getKey()).toString();
+                if (content.contains(word)) {
+                    String temp = content.substring(content.indexOf(word));
+                    int x = temp.indexOf(", ");
+                    x = x != -1 ? x : temp.length();
+                    double val = Double.parseDouble(temp.substring(temp.indexOf("=") + 1, x));
                     res += val * entry.getValue();
                 }
             }
-
-
-            int rand = key.hashCode() % 3;
-            String result = key + ";" + Double.toString(res);
+            int rand = doc_id % 3;
+            String result = doc_id + ";" + Double.toString(res);
             context.write(new IntWritable(rand), new Text(result));
         }
+    }
 
+    public static class QueryReducer
+            extends Reducer<IntWritable, Text, IntWritable, Text> {
+        private static class Pair {
+            public String id;
+            public double val;
+
+            Pair(String id, Double val) {
+                this.id = id;
+                this.val = val;
+            }
+        }
+
+        private int top = 0;
+
+        QueryReducer() throws Exception{
+            Configuration configuration = new Configuration();
+            //Open file system
+            FileSystem fileSystem = FileSystem.get(URI.create(file_system_path), configuration);
+            Path hdfsPath = new Path(topPath);
+            try {
+                BufferedReader bfr = new BufferedReader(new InputStreamReader(fileSystem.open(hdfsPath)));
+                top = Integer.parseInt(bfr.readLine());
+            } catch (IOException ex) {
+                System.out.println("QueryReducer - could not read from HDFS\n");
+            }
+        }
+
+        public void reduce(IntWritable key, Iterable<Text> value, Context context)
+                throws IOException, InterruptedException {
+            ArrayList<Pair> arrayList = new ArrayList<Pair>();
+            for (Text text : value) {
+                String input[] = text.toString().split(";");
+                String id = input[0];
+                Double val = Double.parseDouble(input[1]);
+                arrayList.add(new Pair(id, val));
+            }
+            Collections.sort(arrayList, new Comparator<Pair>() {
+                        @Override
+                        public int compare(Pair p1, Pair p2) {
+                            return -Double.compare(p1.val, p2.val);
+                        }
+                    }
+            );
+            for(int i = 0; i < top && i < arrayList.size(); ++i ){
+                String result = arrayList.get(i).id + ";" + arrayList.get(i).val;
+                context.write(new IntWritable(1), new Text(result));
+            }
+        }
+    }
+
+    private static void save_top(int top) {
+        try {
+            Configuration configuration = new Configuration();
+            FileSystem hdfs = FileSystem.get(new URI(file_system_path), configuration);
+            Path file = new Path(topPath);
+            if (hdfs.exists(file)) {
+                hdfs.delete(file, true);
+            }
+            OutputStream os = hdfs.create(file);
+            BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os, "UTF-8"));
+            br.write(String.valueOf(top));
+            br.close();
+            hdfs.close();
+        } catch (Exception ex) {
+            System.out.println("couldn't write top value to hdfs");
+            System.out.println(ex.getMessage());
+
+            System.exit(0);
+        }
+
+    }
+
+    private static void save_tf(String text) {
+        HashMap<String, Integer> hashMap = process_tf_of_query(text);
+        try {
+            Configuration configuration = new Configuration();
+            FileSystem hdfs = FileSystem.get(new URI(file_system_path), configuration);
+            Path file = new Path(tfPath);
+            if (hdfs.exists(file)) {
+                hdfs.delete(file, true);
+            }
+            OutputStream os = hdfs.create(file);
+            BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os, "UTF-8"));
+            for (Map.Entry<String, Integer> entry :
+                    hashMap.entrySet()) {
+                br.write(entry.getKey() + " " + entry.getValue() + "\n");
+            }
+            br.close();
+            hdfs.close();
+        } catch (Exception ex) {
+            System.out.println("couldn't write query map to hdfs");
+            System.out.println(ex.getMessage());
+
+            System.exit(0);
+        }
     }
 
     private static HashMap<String, Integer> process_tf_of_query(String text) {
@@ -114,7 +202,7 @@ public class Query {
                 }
             }
             if (bad) continue;
-            if (hashMap.containsKey(word)) {
+            if (!hashMap.containsKey(word)) {
                 hashMap.put(word, 1); // put 1 for new word
             } else {
                 hashMap.put(word, hashMap.get(word) + 1); // increase by one for old
@@ -123,135 +211,38 @@ public class Query {
         return hashMap;
     }
 
-    public static class QueryReducer
-            extends Reducer<IntWritable, Text, IntWritable, Text > {
-
-        private int top = 0;
-
-        QueryReducer() throws Exception{
-            Configuration configuration = new Configuration();
-            //Open file system
-            FileSystem fileSystem = FileSystem.get(URI.create(file_system_path), configuration);
-            StringBuilder fileContent = new StringBuilder("");
-            Path hdfsPath = new Path(topPath);
-            try {
-                BufferedReader bfr = new BufferedReader(new InputStreamReader(fileSystem.open(hdfsPath)));
-                String str;
-                top = Integer.parseInt(bfr.readLine());
-                System.out.println("top equal : " + top);
-            } catch (IOException ex) {
-                System.out.println("----------Could not read from HDFS---------\n");
-            }
-
-        }
-
-        private static class Pair {
-            public String id;
-            public double val;
-
-            Pair(String id, Double val) {
-                this.id = id;
-                this.val = val;
-            }
-
-        }
-
-        public void reduce(IntWritable key, Iterable<Text> value,
-                           Context context
-        ) throws IOException, InterruptedException {
-            ArrayList<Pair> arrayList = new ArrayList<Pair>();
-            for (Text text : value) {
-                String input[] = text.toString().split(";");
-                String id = input[0];
-                Double val = Double.parseDouble(input[1]);
-                arrayList.add(new Pair(id, val));
-            }
-            if (arrayList.size() > top) {
-                Collections.sort(arrayList, new Comparator<Pair>() {
-                            @Override
-                            public int compare(Pair p1, Pair p2) {
-                                return -Double.compare(p1.val, p2.val);
-                            }
-                        }
-                );
-            }
-            for(int i = 0; i < top && i < arrayList.size(); ++i ){
-                String result = arrayList.get(i).id + ";" + arrayList.get(i).val;
-                context.write(new IntWritable(1), new Text(result));
-            }
-        }
-    }
-
-
-    private static void save_tf(String text) {
-        HashMap<String, Integer> hashMap = process_tf_of_query(text);
-
-        try {
-            Configuration configuration = new Configuration();
-            FileSystem hdfs = FileSystem.get(new URI(file_system_path), configuration);
-            Path file = new Path(tfPath);
-            if (hdfs.exists(file)) {
-                hdfs.delete(file, true);
-            }
-            OutputStream os = hdfs.create(file);
-            BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os, "UTF-8"));
-            for (Map.Entry<String, Integer> entry :
-                    hashMap.entrySet()) {
-                br.write(entry.getKey() + " " + entry.getValue() + "\n");
-            }
-            br.close();
-            hdfs.close();
-        } catch (Exception ex) {
-            System.out.println("couldnt write query map to hdfs");
-            System.out.println(ex.getMessage());
-
-            System.exit(0);
-        }
-
-    }
-
-    private static void save_top(int top) {
-        try {
-            Configuration configuration = new Configuration();
-            FileSystem hdfs = FileSystem.get(new URI(file_system_path), configuration);
-            Path file = new Path(topPath);
-            if (hdfs.exists(file)) {
-                hdfs.delete(file, true);
-            }
-            OutputStream os = hdfs.create(file);
-            BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os, "UTF-8"));
-            br.write(top);
-            br.close();
-            hdfs.close();
-        } catch (Exception ex) {
-            System.out.println("couldnt write top value  to hdfs");
-            System.out.println(ex.getMessage());
-
-            System.exit(0);
-        }
-
-    }
-
     public static void main(String[] args) throws Exception {
+        for(int i = 0; i < 6; i++){
+            if(i < args.length)
+                continue;
+            System.out.println("\nNot enough arguments: " + i + " instead of 6");
+            return;
+        }
+
+        temp_idf = args[1];
+        System.out.println("idf: " + temp_idf);
+
+        tf_idf = args[2];
+        System.out.println("tf_idf: " + tf_idf);
+
+        result_folder = args[3];
+        System.out.println("result_folder: " + result_folder);
+
+
         int top;
-        String query_text ;
         try {
             top = Integer.parseInt(args[4]);
+            System.out.println("top: " + top);
         } catch (Exception ex) {
-            System.out.println("specify the number of articles for ranking");
+            System.out.println("top must be integer, got: " + args[4]);
             return;
         }
 
-        try {
-            query_text = args[5];
-        } catch (Exception ex) {
-            System.out.println("specify the query text");
-            return;
-        }
+        String query_text = args[5];
+        System.out.println("query: " + query_text);
 
-        save_tf(query_text);
         save_top(top);
-
+        save_tf(query_text);
 
         Configuration conf = new Configuration();
 
@@ -265,10 +256,9 @@ public class Query {
         job.setOutputKeyClass(IntWritable.class);
         job.setOutputValueClass(Text.class);
 
-        FileInputFormat.addInputPath(job, new Path("output_tf_idf"));
-        FileOutputFormat.setOutputPath(job, new Path("Result"));
+        FileInputFormat.addInputPath(job, new Path(tf_idf));
+        FileOutputFormat.setOutputPath(job, new Path(result_folder));
 
         System.exit(job.waitForCompletion(true) ? 0 : 1);
     }
-
 }
