@@ -104,6 +104,7 @@ public class Query {
         private int top = 0;
 
         QueryReducer() throws Exception{
+
             Configuration configuration = new Configuration();
             //Open file system
             FileSystem fileSystem = FileSystem.get(URI.create(file_system_path), configuration);
