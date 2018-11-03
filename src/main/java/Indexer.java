@@ -85,6 +85,7 @@ public class Indexer {
             context.write(key, new IntWritable(sum));
         }
     }
+
     public static class TfIdfMapper
             extends Mapper<Object, Text, Text, MapWritable> {
         private Gson g = new Gson();
@@ -162,35 +163,37 @@ public class Indexer {
             }
         }
     }
+
     public static void clear_folders(Configuration configuration) throws URISyntaxException, IOException {
         FileSystem hdfs = FileSystem.get(new URI(file_system_path), configuration);
-        Path tfIdfFile = new Path(file_system_path+tf_idf_output);
+        Path tfIdfFile = new Path(file_system_path + tf_idf_output);
         if (hdfs.exists(tfIdfFile)) {
             System.out.println("There is " + tfIdfFile.getName() + " folder, it will be removed");
             hdfs.delete(tfIdfFile, true);
-        }else{
-            System.out.println("New folder will be created: "+ tfIdfFile.getName());
+        } else {
+            System.out.println("New folder will be created: " + tfIdfFile.getName());
         }
-        Path temp_idf_file = new Path(file_system_path+temp_idf);
+        Path temp_idf_file = new Path(file_system_path + temp_idf);
         if (hdfs.exists(temp_idf_file)) {
             System.out.println("There is " + temp_idf_file.getName() + " folder, it will be removed");
             hdfs.delete(temp_idf_file, true);
-        }else{
-            System.out.println("New folder will be created: "+ temp_idf_file.getName());
+        } else {
+            System.out.println("New folder will be created: " + temp_idf_file.getName());
         }
         hdfs.close();
     }
+
     public static void main(String[] args) throws Exception {
-        if (args.length<2){
+        if (args.length < 3) {
             System.out.println("There is no enough arguments are passed");
             System.exit(1);
         }
         // if there is no less than 3 arguments keep temp_idf path default
-        if(args.length>2) {
-            temp_idf =args[2];
+        if (args.length > 3) {
+            temp_idf = args[3];
         }
-        input_folder = args[0];
-        tf_idf_output =args[1];
+        input_folder = args[1];
+        tf_idf_output = args[2];
 
         Configuration conf = new Configuration();
         clear_folders(conf);
@@ -208,7 +211,7 @@ public class Indexer {
         FileInputFormat.addInputPath(job, new Path(input_folder));
         FileOutputFormat.setOutputPath(job, new Path(temp_idf));
 
-        if (job.waitForCompletion(true)){
+        if (job.waitForCompletion(true)) {
 
 
             Job job2 = Job.getInstance(conf, "Documents TF/IDF");
@@ -219,12 +222,12 @@ public class Indexer {
 
             job2.setOutputKeyClass(Text.class);
             job2.setOutputValueClass(MapWritable.class);
-            job2.setNumReduceTasks(5);
+            job2.setNumReduceTasks(100);
             FileInputFormat.addInputPath(job2, new Path(input_folder));
             FileOutputFormat.setOutputPath(job2, new Path(tf_idf_output));
 
             System.exit(job2.waitForCompletion(true) ? 0 : 1);
-        }else{
+        } else {
             System.exit(1);
         }
     }
