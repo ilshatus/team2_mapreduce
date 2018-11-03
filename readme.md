@@ -1,8 +1,3 @@
-Change the following line to specify class to execute in the **pom.xml**
-```
-<exec.mainClass>[Class to execute]</exec.mainClass>
-```
-
 Write this command in the Intellij IDEA terminal to compile executable jar
 ```
 mvn clean compile assembly:single
@@ -13,14 +8,9 @@ To access cluster (or use Putty)
 ssh team2@10.90.138.32
 ```
 
-To run the app
+To see usage
 ```
-/hadoop/bin/hadoop jar [app_name].jar
-```
-
-If the directory already exists:
-```
-/hadoop/bin/hadoop fs -rm -r [dir_name]
+/hadoop/bin/hadoop jar search_engine.jar 
 ```
 
 To get file from hdfs:

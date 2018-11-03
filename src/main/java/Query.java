@@ -14,82 +14,55 @@ import java.util.*;
 
 public class Query {
     private final static String file_system_path = "hdfs://10.90.138.32:9000/user/team2/";
-    private final static String tfPath = "hdfs://10.90.138.32:9000/user/team2/query_tf";
 
-    private final static String topPath = "hdfs://10.90.138.32:9000/user/team2/top";
+    private static class Pair {
+        String id;
+        double val;
 
-    private static String tf_idf = "tf_idf";
-    private static String temp_idf = "temp_idf_output";
-    private static String result_folder = "result";
+        Pair(String id, Double val) {
+            this.id = id;
+            this.val = val;
+        }
+    }
 
     public static class QueryMapper
             extends Mapper<Object, Text, IntWritable, Text> {
-        private HashMap<String, Integer> wordsIdf; // idfs of documents
-        private HashMap<String, Double> queryTfIdf; // idf for words from query
-
-        //Default constructor
-        public QueryMapper() throws IOException {
-            //Initialise HashMap
-            wordsIdf = new HashMap<String, Integer>();
-            //new configuration
-            Configuration configuration = new Configuration();
-            //Open file system
-            FileSystem fileSystem = FileSystem.get(URI.create(file_system_path), configuration);
-            //iterator for files
-            RemoteIterator<LocatedFileStatus> fileStatusListIterator = fileSystem.listFiles(
-                    new Path(temp_idf), true);
-            //for all files in folder
-            while (fileStatusListIterator.hasNext()) {
-                //open stream for file
-                FSDataInputStream stream = fileSystem.open(fileStatusListIterator.next().getPath());
-                Scanner scanner = new Scanner(stream);
-                //Add number to map
-                while (scanner.hasNextLine()) {
-                    String inputLine = scanner.nextLine();
-                    String[] input = inputLine.split("[ \t]+");
-                    wordsIdf.put(input[0], Integer.parseInt(input[1]));
-                }
-            }
-
-            queryTfIdf = new HashMap<String, Double>();
-            Path hdfsPath = new Path(tfPath);
-            try {
-                BufferedReader bfr = new BufferedReader(new InputStreamReader(fileSystem.open(hdfsPath)));
-                String str;
-                while ((str = bfr.readLine()) != null) {
-                    String input[] = str.split(" ");
-                    if (wordsIdf.containsKey(input[0])) {
-                        queryTfIdf.put(input[0], 1D * Integer.parseInt(input[1]) / wordsIdf.get(input[0]));
-                    }
-                }
-            } catch (IOException ex) {
-                System.out.println("QueryMapper - could not read from HDFS\n");
-            }
-
-            fileSystem.close();
-        }
+        private HashMap<String, Integer> queryTf; // idf for words from query
 
         public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+            if (queryTf == null) {
+                //if the queryTf hashMap is not initialized
+                queryTf = new HashMap<String, Integer>();
+                //get the query_tf from the configuration
+                String tfs[] = context.getConfiguration().get("query_tf").split("\n");
+                //fill the hashMap
+                for (String line : tfs) {
+                    String input[] = line.split(" ");
+                    queryTf.put(input[0], Integer.parseInt(input[1]));
+                }
+            }
+
             String str = value.toString();
-            if(str.trim().length() == 0)
+            if (str.trim().length() == 0)
                 return;
+            //parse the document id
             int doc_id = Integer.parseInt(str.substring(0, str.indexOf('{')).trim());
+
+            //parse the mapWritable
             String content = str.substring(str.indexOf('{') + 1, str.indexOf('}'));
             double res = 0.0;
-            if(content.trim().length() == 0)
+            if (content.trim().length() == 0)
                 return;
 
+            //split the content into the word-tf/idf pairs
             String vals[] = content.split(",");
-            for (String entry : vals){
-                try{
+            for (String entry : vals) {
                 String inputs[] = entry.split("=");
                 String word = inputs[0].trim();
                 Double val = Double.parseDouble(inputs[1]);
-                if(queryTfIdf.containsKey(word)){
-                    res+=queryTfIdf.get(word) * val;
-                }}
-                catch (Exception e){
-                    throw new IOException("err:"+doc_id + " " + content);
+                //compute the document relevance
+                if (queryTf.containsKey(word)) {
+                    res += queryTf.get(word) * val;
                 }
             }
             int rand = doc_id % 3;
@@ -98,43 +71,21 @@ public class Query {
         }
     }
 
-    public static class QueryReducerFirst
+    public static class QueryCombiner
             extends Reducer<IntWritable, Text, IntWritable, Text> {
-        private static class Pair {
-            public String id;
-            public double val;
-
-            Pair(String id, Double val) {
-                this.id = id;
-                this.val = val;
-            }
-        }
-
-        private int top = 0;
-
-        QueryReducerFirst() throws Exception{
-
-            Configuration configuration = new Configuration();
-            //Open file system
-            FileSystem fileSystem = FileSystem.get(URI.create(file_system_path), configuration);
-            Path hdfsPath = new Path(topPath);
-            try {
-                BufferedReader bfr = new BufferedReader(new InputStreamReader(fileSystem.open(hdfsPath)));
-                top = Integer.parseInt(bfr.readLine());
-            } catch (IOException ex) {
-                System.out.println("QueryReducer - could not read from HDFS\n");
-            }
-        }
-
         public void reduce(IntWritable key, Iterable<Text> value, Context context)
                 throws IOException, InterruptedException {
+            //get the top value from the configuration
+            int top = Integer.parseInt(context.getConfiguration().get("top"));
             ArrayList<Pair> arrayList = new ArrayList<Pair>();
+            //parse the data
             for (Text text : value) {
                 String input[] = text.toString().split(";");
                 String id = input[0];
                 Double val = Double.parseDouble(input[1]);
                 arrayList.add(new Pair(id, val));
             }
+            //sort the data
             Collections.sort(arrayList, new Comparator<Pair>() {
                         @Override
                         public int compare(Pair p1, Pair p2) {
@@ -142,50 +93,29 @@ public class Query {
                         }
                     }
             );
-            for(int i = 0; i < top && i < arrayList.size(); ++i ){
+            //eliminate first top pairs
+            for (int i = 0; i < top && i < arrayList.size(); ++i) {
                 String result = arrayList.get(i).id + ";" + arrayList.get(i).val;
                 context.write(new IntWritable(1), new Text(result));
             }
         }
     }
 
-    public static class QueryReducerFinal
+    public static class QueryReducer
             extends Reducer<IntWritable, Text, IntWritable, Text> {
-        private static class Pair {
-            public String id;
-            public double val;
-
-            Pair(String id, Double val) {
-                this.id = id;
-                this.val = val;
-            }
-        }
-
-        private int top = 0;
-
-        QueryReducerFinal() throws Exception{
-
-            Configuration configuration = new Configuration();
-            //Open file system
-            FileSystem fileSystem = FileSystem.get(URI.create(file_system_path), configuration);
-            Path hdfsPath = new Path(topPath);
-            try {
-                BufferedReader bfr = new BufferedReader(new InputStreamReader(fileSystem.open(hdfsPath)));
-                top = Integer.parseInt(bfr.readLine());
-            } catch (IOException ex) {
-                System.out.println("QueryReducer - could not read from HDFS\n");
-            }
-        }
-
         public void reduce(IntWritable key, Iterable<Text> value, Context context)
                 throws IOException, InterruptedException {
+            //get the top value from the configuration
+            int top = Integer.parseInt(context.getConfiguration().get("top"));
             ArrayList<Pair> arrayList = new ArrayList<Pair>();
+            //parse the data
             for (Text text : value) {
                 String input[] = text.toString().split(";");
                 String id = input[0];
                 Double val = Double.parseDouble(input[1]);
                 arrayList.add(new Pair(id, val));
             }
+            //sort the data
             Collections.sort(arrayList, new Comparator<Pair>() {
                         @Override
                         public int compare(Pair p1, Pair p2) {
@@ -193,72 +123,25 @@ public class Query {
                         }
                     }
             );
-            for(int i = 0; i < top && i < arrayList.size(); ++i ){
-                String resultValue = "Value : " + arrayList.get(i).val;
-                String resultLink = "Link : " + "https://en.wikipedia.org/wiki?curid=" +arrayList.get(i).id;
-                String resultId = "Id : " + arrayList.get(i).id;
+            //eliminate first top pairs and make the data look better
+            for (int i = 0; i < top && i < arrayList.size(); ++i) {
+                String resultValue = "Value: " + arrayList.get(i).val;
+                String resultLink = "Link: " + "https://en.wikipedia.org/wiki?curid=" + arrayList.get(i).id;
+                String resultId = "Id: " + arrayList.get(i).id;
                 String result = resultId + " " + resultValue + " " + resultLink;
-                context.write(new IntWritable(i+1), new Text(result));
+                context.write(new IntWritable(i + 1), new Text(result));
             }
         }
     }
 
-    private static void save_top(int top) {
-        try {
-            Configuration configuration = new Configuration();
-            FileSystem hdfs = FileSystem.get(new URI(file_system_path), configuration);
-            Path file = new Path(topPath);
-            if (hdfs.exists(file)) {
-                hdfs.delete(file, true);
-            }
-            OutputStream os = hdfs.create(file);
-            BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os, "UTF-8"));
-            br.write(String.valueOf(top));
-            br.close();
-            hdfs.close();
-        } catch (Exception ex) {
-            System.out.println("couldn't write top value to hdfs");
-            System.out.println(ex.getMessage());
-
-            System.exit(0);
-        }
-
-    }
-
-    private static void save_tf(String text) {
-        HashMap<String, Integer> hashMap = process_tf_of_query(text);
-        try {
-            Configuration configuration = new Configuration();
-            FileSystem hdfs = FileSystem.get(new URI(file_system_path), configuration);
-            Path file = new Path(tfPath);
-            if (hdfs.exists(file)) {
-                hdfs.delete(file, true);
-            }
-            OutputStream os = hdfs.create(file);
-            BufferedWriter br = new BufferedWriter(new OutputStreamWriter(os, "UTF-8"));
-            for (Map.Entry<String, Integer> entry :
-                    hashMap.entrySet()) {
-                br.write(entry.getKey() + " " + entry.getValue() + "\n");
-            }
-            br.close();
-            hdfs.close();
-        } catch (Exception ex) {
-            System.out.println("couldn't write query map to hdfs");
-            System.out.println(ex.getMessage());
-
-            System.exit(0);
-        }
-    }
-
-    private static HashMap<String, Integer> process_tf_of_query(String text) {
+    private static String process_tf(String text) {
         HashMap<String, Integer> hashMap = new HashMap<String, Integer>();
-
         String[] words = text.toLowerCase()
-                .split("([ \n\t\r'\"!@#$%^&*()_\\-+={}\\[\\]|<>;:,.\\/`~]|\\n)+");
+                .split("([ \n\t\r'\"!@#$%^&*()_\\-+={}\\[\\]|<>;:,./`~]|\\n)+");
         //for each word
         for (String word : words) {
             boolean bad = false;
-            //check if word consist of letters
+            //check if word consists of letters
             for (Character ch : word.toCharArray()) {
                 if (!(ch >= 'a' && ch <= 'z')) {
                     bad = true;
@@ -266,76 +149,95 @@ public class Query {
                 }
             }
             if (bad) continue;
-            if (!hashMap.containsKey(word)) {
-                hashMap.put(word, 1); // put 1 for new word
+            if (hashMap.containsKey(word)) {
+                //if word is in the map increase its value by one
+                hashMap.put(word, hashMap.get(word) + 1);
             } else {
-                hashMap.put(word, hashMap.get(word) + 1); // increase by one for old
+                //if word is not in the map, set the value to one
+                hashMap.put(word, 1);
             }
         }
-        return hashMap;
+        String result = "";
+        for (Map.Entry<String, Integer> entry :
+                hashMap.entrySet()) {
+            result = result.concat(entry.getKey() + " " + entry.getValue() + "\n");
+        }
+        return result;
     }
 
-    public static void clear_folders(Configuration configuration) throws URISyntaxException, IOException {
-        FileSystem hdfs = FileSystem.get(new URI(file_system_path), configuration);
-        Path resultFile = new Path(file_system_path + result_folder);
+    private static void clear_folders(Configuration conf) throws URISyntaxException, IOException {
+        //delete result_folder folder if it exists
+        FileSystem hdfs = FileSystem.get(new URI(file_system_path), conf);
+        Path resultFile = new Path(file_system_path + conf.get("result_folder"));
         if (hdfs.exists(resultFile)) {
-            System.out.println("There is " + resultFile.getName() + " folder, it will be removed");
             hdfs.delete(resultFile, true);
+            System.out.println("Removing existing " + resultFile.getName() + " folder...");
         } else {
-            System.out.println("New folder will be created: " + resultFile.getName());
+            System.out.println("Creating new " + resultFile.getName() + " folder...");
         }
         hdfs.close();
+        System.out.println();
     }
 
     public static void main(String[] args) throws Exception {
-        for(int i = 0; i < 6; i++){
-            if(i < args.length)
-                continue;
-            System.out.println("\nNot enough arguments: " + i + " instead of 6");
-            return;
-        }
+        //read input
+        System.out.println("\nINPUT:");
+        String tf_idf_output = args[1];
+        System.out.println("\ttf idf folder: " + tf_idf_output);
+        String result_folder = args[2];
+        System.out.println("\tresult folder: " + result_folder);
 
-        temp_idf = args[1];
-        System.out.println("idf: " + temp_idf);
-
-        tf_idf = args[2];
-        System.out.println("tf_idf: " + tf_idf);
-
-        result_folder = args[3];
-        System.out.println("result_folder: " + result_folder);
-
-
-        int top;
+        int top = 1;
         try {
-            top = Integer.parseInt(args[4]);
-            System.out.println("top: " + top);
+            top = Integer.parseInt(args[3]);
+            if (top <= 0) {
+                System.out.println("Top must be greater than zero, got: " + top);
+                System.exit(1);
+            }
+            System.out.println("\ttop: " + top);
         } catch (Exception ex) {
-            System.out.println("top must be integer, got: " + args[4]);
-            return;
+            System.out.println("Top must be an integer, got: " + args[3]);
+            System.exit(1);
         }
 
-        String query_text = args[5];
-        System.out.println("query: " + query_text);
+        String query_text = args[4];
+        System.out.println("\tquery: " + query_text + "\n");
 
-        save_top(top);
-        save_tf(query_text);
-
+        //create configuration and save variables
         Configuration conf = new Configuration();
-
+        conf.set("tf_idf_output", tf_idf_output);
+        conf.set("result_folder", result_folder);
+        conf.set("top", String.valueOf(top));
+        conf.set("query_tf", process_tf(query_text));
         clear_folders(conf);
-        Job job = Job.getInstance(conf, "Query ");
 
+        //create Query job
+        Job job = Job.getInstance(conf, "Query");
+
+        //configure job
         job.setJarByClass(Query.class);
         job.setMapperClass(QueryMapper.class);
-        job.setCombinerClass(QueryReducerFirst.class);
-        job.setReducerClass(QueryReducerFinal.class);
+        job.setCombinerClass(QueryCombiner.class);
+        job.setReducerClass(QueryReducer.class);
 
         job.setOutputKeyClass(IntWritable.class);
         job.setOutputValueClass(Text.class);
 
-        FileInputFormat.addInputPath(job, new Path(tf_idf));
+        FileInputFormat.addInputPath(job, new Path(tf_idf_output));
         FileOutputFormat.setOutputPath(job, new Path(result_folder));
 
-        System.exit(job.waitForCompletion(true) ? 0 : 1);
+        if (job.waitForCompletion(true)) {
+            //Print result to the console
+            FileSystem fileSystem = FileSystem.get(URI.create(file_system_path), conf);
+            Path resultFile = new Path(file_system_path + result_folder + "/part-r-00000");
+            Scanner scanner = new Scanner(fileSystem.open(resultFile));
+            System.out.println("\nResult:");
+            while (scanner.hasNextLine()) {
+                System.out.println("\t" + scanner.nextLine());
+            }
+            fileSystem.close();
+        } else {
+            System.exit(1);
+        }
     }
 }

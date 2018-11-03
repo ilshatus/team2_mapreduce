@@ -23,31 +23,28 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 public class Indexer {
 
     private final static String file_system_path = "hdfs://10.90.138.32:9000/user/team2/";
-    private static String temp_idf = "temp_idf_output";
-    private static String tf_idf_output = "tf_idf";
-    private static String input_folder = "EnWikiAA";
 
     public static class IdfMapper
             extends Mapper<Object, Text, Text, IntWritable> {
 
-        //Google json parse
+        //google json parse
         private Gson g = new Gson();
 
         public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
-            //new document start from new line
+            //new document starts from new line
             StringTokenizer documents = new StringTokenizer(value.toString(), "\n");
-            //Map will contain existent of word
+            //map will contain the existence of the words
             Map<String, Boolean> wordExists = new HashMap<String, Boolean>();
             while (documents.hasMoreTokens()) {
                 //parse json
                 Document document = g.fromJson(documents.nextToken(), Document.class);
-                //split to words
+                //split into words
                 String[] words = document.getText().toLowerCase()
-                        .split("([ \n\t\r'\"!@#$%^&*()_\\-+={}\\[\\]|<>;:,.\\/`~]|\\n)+");
+                        .split("([ \n\t\r'\"!@#$%^&*()_\\-+={}\\[\\]|<>;:,./`~]|\\n)+");
                 //for each word
                 for (String word : words) {
                     boolean bad = false;
-                    //check if word consist of letters
+                    //check if word consists of letters
                     for (Character ch : word.toCharArray()) {
                         if (!(ch >= 'a' && ch <= 'z')) {
                             bad = true;
@@ -55,7 +52,7 @@ public class Indexer {
                         }
                     }
                     if (bad) continue;
-                    //if word does not exist add to hash map
+                    //if word does not exist, add it to hash map
                     if (!wordExists.containsKey(word)) {
                         wordExists.put(word, true);
                         context.write(new Text(word), new IntWritable(1));
@@ -67,21 +64,16 @@ public class Indexer {
         }
     }
 
-
     public static class IdfReducer
             extends Reducer<Text, IntWritable, Text, IntWritable> {
         public void reduce(Text key, Iterable<IntWritable> values,
                            Context context) throws IOException, InterruptedException {
-
-            Integer sum = 0;
-
-            //Since mapper returns only one if it occurs in document
-            //We can sum up to knw in how much document word occurs
+            int sum = 0;
+            //since mapper returns only ones for words existing in the document
+            //we can sum up to find out the number of documents, containing this word
             for (IntWritable val : values) {
-
                 sum += val.get();
             }
-
             context.write(key, new IntWritable(sum));
         }
     }
@@ -89,39 +81,37 @@ public class Indexer {
     public static class TfIdfMapper
             extends Mapper<Object, Text, Text, MapWritable> {
         private Gson g = new Gson();
-
-        private final String idfPath = "hdfs://10.90.138.32:9000/user/team2/";
-        //This hash map will contain Idfs of documents
+        //this hash map will contain Idfs of documents
         private HashMap<String, Integer> wordsIdf;
 
-        //Default constructor
-        public TfIdfMapper() throws IOException {
-            //Initialise HashMap
-            wordsIdf = new HashMap<String, Integer>();
-
-            //new configuration
-            Configuration configuration = new Configuration();
-            //Open file system
-            FileSystem fileSystem = FileSystem.get(URI.create(idfPath), configuration);
-            //iterator for files
-            RemoteIterator<LocatedFileStatus> fileStatusListIterator = fileSystem.listFiles(
-                    new Path(temp_idf), true);
-            //for all files in folder
-            while (fileStatusListIterator.hasNext()) {
-                //open stream for file
-                FSDataInputStream stream = fileSystem.open(fileStatusListIterator.next().getPath());
-                Scanner scanner = new Scanner(stream);
-                //Add number to map
-                while (scanner.hasNextLine()) {
-                    String inputLine = scanner.nextLine();
-                    String[] input = inputLine.split("[ \t]+");
-                    wordsIdf.put(input[0], Integer.parseInt(input[1]));
-                }
-            }
-            fileSystem.close();
-        }
-
         public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+            if(wordsIdf == null){
+                //Initialise HashMap
+                wordsIdf = new HashMap<String, Integer>();
+
+                //new configuration
+                Configuration conf = context.getConfiguration();
+                String idf_output = conf.get("idf_output");
+                //Open file system
+                FileSystem fileSystem = FileSystem.get(URI.create(file_system_path), conf);
+                //iterator for files
+                RemoteIterator<LocatedFileStatus> fileStatusListIterator = fileSystem.listFiles(
+                        new Path(idf_output), true);
+                //for all files in folder
+                while (fileStatusListIterator.hasNext()) {
+                    //open stream for file
+                    FSDataInputStream stream = fileSystem.open(fileStatusListIterator.next().getPath());
+                    Scanner scanner = new Scanner(stream);
+                    //add number to map
+                    while (scanner.hasNextLine()) {
+                        String inputLine = scanner.nextLine();
+                        String[] input = inputLine.split("[ \t]+");
+                        wordsIdf.put(input[0], Integer.parseInt(input[1]));
+                    }
+                }
+                fileSystem.close();
+            }
+
             //split file by new line
             StringTokenizer documents = new StringTokenizer(value.toString(), "\n");
             //map will contain how much each word was in document
@@ -131,11 +121,11 @@ public class Indexer {
                 Document document = g.fromJson(documents.nextToken(), Document.class);
                 //get all words
                 String[] words = document.getText().toLowerCase()
-                        .split("([ \n\t\r'\"!@#$%^&*()_\\-+={}\\[\\]|<>;:,.\\/`~]|\\n)+");
+                        .split("([ \n\t\r'\"!@#$%^&*()_\\-+={}\\[\\]|<>;:,./`~]|\\n)+");
                 //for each word
                 for (String word : words) {
                     boolean bad = false;
-                    //check word if words does not consist of letters skip this word
+                    //check if word consists of letters
                     for (Character ch : word.toCharArray()) {
                         if (!(ch >= 'a' && ch <= 'z')) {
                             bad = true;
@@ -143,20 +133,20 @@ public class Indexer {
                         }
                     }
                     if (bad) continue;
-                    //if word is in map increase value by one
                     if (wordsCount.containsKey(word)) {
+                        //if word is in the map increase its value by one
                         wordsCount.put(word, wordsCount.get(word) + 1);
                     } else {
-                        //if word is not in map set value one and the word
+                        //if word is not in the map, set the value to one
                         wordsCount.put(word, 1);
                     }
                 }
-                //divide tf by idf
+                //divide tf by idf squared to avoid computing tf/idf for query, so that query tf is enough
                 MapWritable tfIdf = new MapWritable();
                 for (String word : wordsCount.keySet()) {
                     Integer tf = wordsCount.get(word);
                     Integer idf = wordsIdf.get(word);
-                    tfIdf.put(new Text(word), new DoubleWritable(1D * tf / idf));
+                    tfIdf.put(new Text(word), new DoubleWritable(1D * tf / (idf * idf)));
                 }
                 context.write(new Text(document.getId()), tfIdf);
                 wordsCount.clear();
@@ -164,43 +154,52 @@ public class Indexer {
         }
     }
 
-    public static void clear_folders(Configuration configuration) throws URISyntaxException, IOException {
-        FileSystem hdfs = FileSystem.get(new URI(file_system_path), configuration);
+    private static void clear_folders(Configuration conf) throws URISyntaxException, IOException {
+        //delete tf_idf_output folder if it exists
+        String tf_idf_output = conf.get("tf_idf_output");
+        FileSystem hdfs = FileSystem.get(new URI(file_system_path), conf);
         Path tfIdfFile = new Path(file_system_path + tf_idf_output);
         if (hdfs.exists(tfIdfFile)) {
-            System.out.println("There is " + tfIdfFile.getName() + " folder, it will be removed");
             hdfs.delete(tfIdfFile, true);
+            System.out.println("Removing existing " + tfIdfFile.getName() + " folder...");
         } else {
-            System.out.println("New folder will be created: " + tfIdfFile.getName());
+            System.out.println("Creating new " + tfIdfFile.getName() + " folder...");
         }
-        Path temp_idf_file = new Path(file_system_path + temp_idf);
+
+        //delete idf_output folder if it exists
+        String idf_output = conf.get("idf_output");
+        Path temp_idf_file = new Path(file_system_path + idf_output);
         if (hdfs.exists(temp_idf_file)) {
-            System.out.println("There is " + temp_idf_file.getName() + " folder, it will be removed");
             hdfs.delete(temp_idf_file, true);
+            System.out.println("Removing existing " + temp_idf_file.getName() + " folder...");
         } else {
-            System.out.println("New folder will be created: " + temp_idf_file.getName());
+            System.out.println("Creating new " + temp_idf_file.getName() + " folder...");
         }
         hdfs.close();
+        System.out.println();
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length < 3) {
-            System.out.println("There is no enough arguments are passed");
-            System.exit(1);
-        }
-        // if there is no less than 3 arguments keep temp_idf path default
-        if (args.length > 3) {
-            temp_idf = args[3];
-        }
-        input_folder = args[1];
-        tf_idf_output = args[2];
+        //read input
+        System.out.println("\nINPUT:");
+        String input_folder = args[1];
+        System.out.println("\tinput folder: " + input_folder);
+        String idf_output = args[2];
+        System.out.println("\tidf output folder: " + idf_output);
+        String tf_idf_output = args[3];
+        System.out.println("\ttf idf output folder: " + tf_idf_output + "\n");
 
+        //create configuration and save paths
         Configuration conf = new Configuration();
+        conf.set("idf_output", idf_output);
+        conf.set("tf_idf_output", tf_idf_output);
         clear_folders(conf);
+
+        //create IDF counting job
         Job job = Job.getInstance(conf, "Word IDF");
 
+        //configure job
         job.setJarByClass(Indexer.class);
-
         job.setMapperClass(IdfMapper.class);
         job.setCombinerClass(IdfReducer.class);
         job.setReducerClass(IdfReducer.class);
@@ -209,20 +208,21 @@ public class Indexer {
         job.setOutputValueClass(IntWritable.class);
 
         FileInputFormat.addInputPath(job, new Path(input_folder));
-        FileOutputFormat.setOutputPath(job, new Path(temp_idf));
+        FileOutputFormat.setOutputPath(job, new Path(idf_output));
 
+        //wait for completion
         if (job.waitForCompletion(true)) {
-
-
+            //create TF/IDF counting job
             Job job2 = Job.getInstance(conf, "Documents TF/IDF");
 
-            job2.setJarByClass(TfIdfCounter.class);
-
+            //configure job
+            job2.setJarByClass(Indexer.class);
             job2.setMapperClass(TfIdfMapper.class);
+            job2.setNumReduceTasks(100);
 
             job2.setOutputKeyClass(Text.class);
             job2.setOutputValueClass(MapWritable.class);
-            job2.setNumReduceTasks(100);
+
             FileInputFormat.addInputPath(job2, new Path(input_folder));
             FileOutputFormat.setOutputPath(job2, new Path(tf_idf_output));
 
