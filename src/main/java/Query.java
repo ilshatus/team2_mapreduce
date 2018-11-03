@@ -9,6 +9,7 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 import java.io.*;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.*;
 
 public class Query {
@@ -70,17 +71,25 @@ public class Query {
 
         public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
             String str = value.toString();
+            if(str.trim().length() == 0)
+                return;
             int doc_id = Integer.parseInt(str.substring(0, str.indexOf('{')).trim());
-            String content = str.substring(str.indexOf('{') + 1, str.length() - 1);
+            String content = str.substring(str.indexOf('{') + 1, str.indexOf('}'));
             double res = 0.0;
-            for (Map.Entry<String, Double> entry : queryTfIdf.entrySet()) {
-                String word = new Text(entry.getKey()).toString();
-                if (content.contains(word)) {
-                    String temp = content.substring(content.indexOf(word));
-                    int x = temp.indexOf(", ");
-                    x = x != -1 ? x : temp.length();
-                    double val = Double.parseDouble(temp.substring(temp.indexOf("=") + 1, x));
-                    res += val * entry.getValue();
+            if(content.trim().length() == 0)
+                return;
+
+            String vals[] = content.split(",");
+            for (String entry : vals){
+                try{
+                String inputs[] = entry.split("=");
+                String word = inputs[0].trim();
+                Double val = Double.parseDouble(inputs[1]);
+                if(queryTfIdf.containsKey(word)){
+                    res+=queryTfIdf.get(word) * val;
+                }}
+                catch (Exception e){
+                    throw new IOException("err:"+doc_id + " " + content);
                 }
             }
             int rand = doc_id % 3;
@@ -211,6 +220,18 @@ public class Query {
         return hashMap;
     }
 
+    public static void clear_folders(Configuration configuration) throws URISyntaxException, IOException {
+        FileSystem hdfs = FileSystem.get(new URI(file_system_path), configuration);
+        Path resultFile = new Path(file_system_path + result_folder);
+        if (hdfs.exists(resultFile)) {
+            System.out.println("There is " + resultFile.getName() + " folder, it will be removed");
+            hdfs.delete(resultFile, true);
+        } else {
+            System.out.println("New folder will be created: " + resultFile.getName());
+        }
+        hdfs.close();
+    }
+
     public static void main(String[] args) throws Exception {
         for(int i = 0; i < 6; i++){
             if(i < args.length)
@@ -246,6 +267,7 @@ public class Query {
 
         Configuration conf = new Configuration();
 
+        clear_folders(conf);
         Job job = Job.getInstance(conf, "Query ");
 
         job.setJarByClass(Query.class);
