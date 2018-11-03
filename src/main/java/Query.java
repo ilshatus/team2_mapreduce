@@ -17,6 +17,10 @@ public class Query {
 
     private final static String topPath = "hdfs://10.90.138.32:9000/user/team2/top";
 
+    private static String tf_idf = "tf_idf";
+    private static String temp_idf = "temp_idf_output";
+    private static String result_folder = "result";
+
     public static class QueryMapper
             extends Mapper<Object, Text, IntWritable, Text> {
         private HashMap<String, Integer> wordsIdf; // idfs of documents
@@ -32,7 +36,7 @@ public class Query {
             FileSystem fileSystem = FileSystem.get(URI.create(file_system_path), configuration);
             //iterator for files
             RemoteIterator<LocatedFileStatus> fileStatusListIterator = fileSystem.listFiles(
-                    new Path("output_idf/"), true);
+                    new Path(temp_idf), true);
             //for all files in folder
             while (fileStatusListIterator.hasNext()) {
                 //open stream for file
@@ -215,6 +219,16 @@ public class Query {
             return;
         }
 
+        temp_idf = args[1];
+        System.out.println("idf: " + temp_idf);
+
+        tf_idf = args[2];
+        System.out.println("tf_idf: " + tf_idf);
+
+        result_folder = args[3];
+        System.out.println("result_folder: " + result_folder);
+
+
         int top;
         try {
             top = Integer.parseInt(args[4]);
@@ -242,8 +256,8 @@ public class Query {
         job.setOutputKeyClass(IntWritable.class);
         job.setOutputValueClass(Text.class);
 
-        FileInputFormat.addInputPath(job, new Path("output_tf_idf"));
-        FileOutputFormat.setOutputPath(job, new Path("Result"));
+        FileInputFormat.addInputPath(job, new Path(tf_idf));
+        FileOutputFormat.setOutputPath(job, new Path(result_folder));
 
         System.exit(job.waitForCompletion(true) ? 0 : 1);
     }
