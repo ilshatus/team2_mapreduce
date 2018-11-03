@@ -98,7 +98,7 @@ public class Query {
         }
     }
 
-    public static class QueryReducer
+    public static class QueryReducerFirst
             extends Reducer<IntWritable, Text, IntWritable, Text> {
         private static class Pair {
             public String id;
@@ -112,7 +112,7 @@ public class Query {
 
         private int top = 0;
 
-        QueryReducer() throws Exception{
+        QueryReducerFirst() throws Exception{
 
             Configuration configuration = new Configuration();
             //Open file system
@@ -145,6 +145,60 @@ public class Query {
             for(int i = 0; i < top && i < arrayList.size(); ++i ){
                 String result = arrayList.get(i).id + ";" + arrayList.get(i).val;
                 context.write(new IntWritable(1), new Text(result));
+            }
+        }
+    }
+
+    public static class QueryReducerFinal
+            extends Reducer<IntWritable, Text, IntWritable, Text> {
+        private static class Pair {
+            public String id;
+            public double val;
+
+            Pair(String id, Double val) {
+                this.id = id;
+                this.val = val;
+            }
+        }
+
+        private int top = 0;
+
+        QueryReducerFinal() throws Exception{
+
+            Configuration configuration = new Configuration();
+            //Open file system
+            FileSystem fileSystem = FileSystem.get(URI.create(file_system_path), configuration);
+            Path hdfsPath = new Path(topPath);
+            try {
+                BufferedReader bfr = new BufferedReader(new InputStreamReader(fileSystem.open(hdfsPath)));
+                top = Integer.parseInt(bfr.readLine());
+            } catch (IOException ex) {
+                System.out.println("QueryReducer - could not read from HDFS\n");
+            }
+        }
+
+        public void reduce(IntWritable key, Iterable<Text> value, Context context)
+                throws IOException, InterruptedException {
+            ArrayList<Pair> arrayList = new ArrayList<Pair>();
+            for (Text text : value) {
+                String input[] = text.toString().split(";");
+                String id = input[0];
+                Double val = Double.parseDouble(input[1]);
+                arrayList.add(new Pair(id, val));
+            }
+            Collections.sort(arrayList, new Comparator<Pair>() {
+                        @Override
+                        public int compare(Pair p1, Pair p2) {
+                            return -Double.compare(p1.val, p2.val);
+                        }
+                    }
+            );
+            for(int i = 0; i < top && i < arrayList.size(); ++i ){
+                String resultValue = "Value : " + arrayList.get(i).val;
+                String resultLink = "Link : " + "https://en.wikipedia.org/wiki?curid=" +arrayList.get(i).id;
+                String resultId = "Id : " + arrayList.get(i).id;
+                String result = resultId + " " + resultValue + " " + resultLink;
+                context.write(new IntWritable(i+1), new Text(result));
             }
         }
     }
@@ -273,8 +327,8 @@ public class Query {
 
         job.setJarByClass(Query.class);
         job.setMapperClass(QueryMapper.class);
-        job.setCombinerClass(QueryReducer.class);
-        job.setReducerClass(QueryReducer.class);
+        job.setCombinerClass(QueryReducerFirst.class);
+        job.setReducerClass(QueryReducerFinal.class);
 
         job.setOutputKeyClass(IntWritable.class);
         job.setOutputValueClass(Text.class);
