@@ -136,6 +136,8 @@ public class Query {
     }
 
     private static String process_tf(String text) {
+        if(text.isEmpty())
+            return text;
         HashMap<String, Integer> hashMap = new HashMap<String, Integer>();
         String[] words = text.toLowerCase()
                 .split("([ \n\t\r'\"!@#$%^&*()_\\-+={}\\[\\]|<>;:,./`~]|\\n)+");
@@ -192,24 +194,28 @@ public class Query {
         try {
             top = Integer.parseInt(args[3]);
             if (top <= 0) {
-                System.out.println("Top must be greater than zero, got: " + top);
+                System.out.println("\nTop must be greater than zero, got: " + top + "\n");
                 System.exit(1);
             }
             System.out.println("\ttop: " + top);
         } catch (Exception ex) {
-            System.out.println("Top must be an integer, got: " + args[3]);
+            System.out.println("\nTop must be an integer, got: '" + args[3] + "'\n");
             System.exit(1);
         }
 
-        String query_text = args[4];
-        System.out.println("\tquery: " + query_text + "\n");
+        String query_tf = process_tf(args[4]);
+        if (query_tf.isEmpty()) {
+            System.out.println("\nQuery should contain at least one english word, got: '" + args[4] + "'\n");
+            System.exit(1);
+        }
+        System.out.println("\tquery: " + args[4] + "\n");
 
         //create configuration and save variables
         Configuration conf = new Configuration();
         conf.set("tf_idf_output", tf_idf_output);
         conf.set("result_folder", result_folder);
         conf.set("top", String.valueOf(top));
-        conf.set("query_tf", process_tf(query_text));
+        conf.set("query_tf", process_tf(query_tf));
         clear_folders(conf);
 
         //create Query job
