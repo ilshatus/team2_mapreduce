@@ -65,9 +65,10 @@ public class Query {
                     res += queryTf.get(word) * val;
                 }
             }
-            int rand = doc_id % 3;
+            int split_value = 101; // value how we split data for the reducer of level1
+            int hash = doc_id % split_value; // calculate hash, each documents with the same hash will be sorted and took 'top' on the next
             String result = doc_id + ";" + Double.toString(res);
-            context.write(new IntWritable(rand), new Text(result));
+            context.write(new IntWritable(hash), new Text(result));
         }
     }
 
